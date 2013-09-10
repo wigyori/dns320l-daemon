@@ -3,13 +3,92 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <memory.h>
+#include <signal.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/uio.h>
+
 #include "dns320l.h"
 
-#define FAN_POLL_TIME    15
+#define FAN_POLL_TIME         15
+#define GPIO_POLL_TIME        1
+#define SERVER_PORT           57367
+#define SYSFS_GPIO_DIR        "/sys/class/gpio"
 
-int
-set_interface_attribs (int fd, int speed, int parity)
+int ls;
+int fd;
+
+int gpio_get_value(unsigned int gpio, unsigned int *value)
+{
+	int fd, len;
+	char buf[100];
+	char ch;
+
+	len = snprintf(buf, sizeof(buf), SYSFS_GPIO_DIR "/gpio%d/value", gpio);
+ 
+	fd = open(buf, O_RDONLY);
+	if (fd < 0) {
+		perror("gpio/get-value");
+		return fd;
+	}
+ 
+	read(fd, &ch, 1);
+
+	if (ch != '0') {
+		*value = 1;
+	} else {
+		*value = 0;
+	}
+ 
+	close(fd);
+	return 0;
+}
+
+
+void cleanup(int shut,int s,int howmany)
+{
+  int     retval;
+
+  /*
+   * Shutdown and close sock1 completely.
+   */
+  if (shut)
+  {
+      retval = shutdown(s,howmany);
+      if (retval == -1)
+          perror ("shutdown");
+  }
+  retval = close (s);
+  if (retval)
+      perror ("close");
+} 
+
+void sighandler(int sig)
+{
+    if (sig == SIGINT){
+        cleanup(0, ls,1);
+        exit(EXIT_SUCCESS);
+    }
+}
+
+void declsighandler()
+{
+    struct sigaction action;
+
+    sigemptyset(&action.sa_mask);
+    sigaddset(&action.sa_mask,SIGINT);
+    action.sa_flags = 0;
+    action.sa_handler = sighandler;
+    sigaction(SIGINT,&action,NULL);
+}
+
+int set_interface_attribs (int fd, int speed, int parity)
 {
         struct termios tty;
         memset (&tty, 0, sizeof tty);
@@ -49,8 +128,7 @@ set_interface_attribs (int fd, int speed, int parity)
         return 0;
 }
 
-void
-set_blocking (int fd, int should_block)
+void set_blocking (int fd, int should_block)
 {
         struct termios tty;
         memset (&tty, 0, sizeof tty);
@@ -121,7 +199,7 @@ int SendCommand(int fd, const char *cmd, int checkAnswer)
         if(checkAnswer)
         {
             tmp = CheckResponse(buf, cmd, i);
-            usleep(10000); // Give the µC some time to answer...
+            usleep(20000); // Give the µC some time to answer...
 
             i=0;
             do
@@ -147,18 +225,136 @@ int SendCommand(int fd, const char *cmd, int checkAnswer)
     }
 }
 
+int HandleCommand(char *message, int messageLen, char *retMessage, int bufSize)
+{
+    int tmp;
+    int len;
+    int i;
+    char cmp[] = "DeviceReady";
+    printf("Handling Command: %s\n", message);
+
+    if(strncmp(message, "DeviceReady", messageLen) == 0)
+    {
+      printf("DeviceReady\n");
+      if(SendCommand(fd, DeviceReadyCmd, 0) == 0)
+          strncpy(retMessage, "OK\n", bufSize);
+      else
+          strncpy(retMessage, "ERR\n", bufSize);
+    }
+    else if(strncmp(message, "GetTemperature", messageLen) == 0)
+    {
+      printf("GetTemperature\n");
+      tmp = SendCommand(fd, ThermalStatusGetCmd, 1);
+      tmp = ThermalTable[tmp];
+      sprintf(retMessage, "%d", tmp);
+      len = strlen(retMessage);
+      retMessage[len] = '\n';
+      retMessage[len+1] = '\0';
+    }
+    else if(strncmp(message, "DeviceShutdown", strlen("DeviceShutdown")) == 0)
+    {
+      printf("DeviceShutdown");
+      if(messageLen >= (strlen("DeviceShutdown") + 2))
+      {
+        //tmp = atoi(&message[strlen("DeviceShutdown") + 1]); // FIXME: The parameter is never passed, we default to 10s here..
+        //printf("%s\n", tmp);
+        if(SendCommand(fd, DeviceShutdownCmd, 0) == 0)
+          strncpy(retMessage, "OK\n", bufSize);
+        else
+          strncpy(retMessage, "ERR\n", bufSize);
+      }
+    }
+    else if(strncmp(message, "quit", messageLen) == 0)
+    {
+      printf("Quit\n");
+      strncpy(retMessage, "Bye\n", bufSize);
+      return 1;
+    }
+    else
+    {
+      strncpy(retMessage, "Command not Understood!\n", bufSize);
+    }
+    
+    
+    //strcpy(retMessage, "OK\n");
+    
+    return 0;
+}
+
 int main(int args, char *argv[])
 {
 
     char *portname = "/dev/ttyS1"; // We hardcode the path, as this daemon is inteded to run on one box only
-    int fd;
+    char response[100];
     int n;
     int i;
+    int j;
+    int powerBtn;
+    int pressed;
+    int opt;
     int sleepCount;
-    int sleepTimeUs;
-    char buf [100];
+    int pollTimeMs;
+    char buf[100];
     int temperature;
     int fanSpeed;
+    struct sockaddr_in s_name;
+    struct pollfd *fds = NULL;
+    nfds_t nfds;
+    int retval;
+    int ret;
+    int atmark;
+    int msgIdx;
+    char message[100];
+    socklen_t namelength;
+    pressed = 0;
+    nfds = 1;
+    opt = 1;
+    sleepCount = 0;
+    pollTimeMs = 10; // Sleep 10ms for every loop
+    fanSpeed = -1;
+    
+    if ((ls = socket (AF_INET, SOCK_STREAM, 0)) == -1){
+         perror( "socket");
+         exit(EXIT_FAILURE);
+    }
+
+    if (setsockopt(ls,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof opt)<0){
+        printf ("setsockopt (SO_RESUSEADDR): %s\r\n",strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+
+    s_name.sin_family = AF_INET;
+    s_name.sin_port = htons(SERVER_PORT);
+    s_name.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    printf(" \t Bind name to ls. \n");
+    retval = bind (ls,(struct sockaddr *)&s_name, sizeof s_name);
+    if (retval)
+    {
+        perror("bind");
+        cleanup(0, ls,1);
+        exit(EXIT_FAILURE);
+    }
+
+    printf(" \t Listen on ls for connections. \n");
+    retval = listen (ls, 5);
+    if (retval)
+    {
+        perror("listen");
+        cleanup(0, ls,1);
+        exit(EXIT_FAILURE);
+    }
+    declsighandler();
+    
+
+    fds = (struct pollfd *)calloc(1,nfds*sizeof(struct pollfd));
+    fds->fd = ls;
+    fds->events = POLLIN | POLLPRI;
+ 
+    
+    
+    
     
     fd = open (portname, O_RDWR | O_NOCTTY | O_SYNC);
     if (fd < 0)
@@ -183,14 +379,10 @@ int main(int args, char *argv[])
         return 1;
     }
 
-    
-    sleepCount = 0;
-    sleepTimeUs = 1000 * 100; // Sleep 100ms for every loop
-    fanSpeed = 0;
     while(1)
     {
         sleepCount = 0;
-        temperature = SendCommand(fd, FanStatusGetCmd, 1);
+        temperature = SendCommand(fd, ThermalStatusGetCmd, 1);
         if(temperature > 0)
         {
             temperature = ThermalTable[temperature];
@@ -247,12 +439,129 @@ int main(int args, char *argv[])
         }
         
         
-        while((sleepCount  * sleepTimeUs) < (FAN_POLL_TIME * 1000 * 1000))
+        while((sleepCount  * pollTimeMs) < (FAN_POLL_TIME * 1000))
         {
-            usleep(sleepTimeUs); // Sleep 100ms, replace by socket polling code for IPC
+            if(((sleepCount * pollTimeMs) % (GPIO_POLL_TIME * 1000)) == 0)
+            {
+                if(gpio_get_value(GPIO_BUTTON_POWER, &powerBtn) == 0)
+                {
+                    if((powerBtn == 0) && !pressed)
+                    {
+                        pressed = 1;
+                        printf("Power Button Pressed!\n");
+                    }
+                }
+            
+            }
             sleepCount++;
+
+            ret=poll(fds,nfds,pollTimeMs); // Time out after pollTimeMs
+            if (ret == -1){
+              perror ("poll");
+              exit(EXIT_FAILURE);
+            }
+            for (i=0;(i<nfds) && (ret);i++)
+            {
+               if (!(fds+i)->revents)
+                   continue;
+               printf("  after : revents=0x%x, ret=%d\n\n",
+                    (fds+i)->revents,
+                    ret);
+               ret--;
+               if (((fds+i)->fd == ls) && ((fds+i)->revents & POLLIN))
+               {
+                    /*
+                     * Accept connection from socket ls:
+                     * accepted connection will be on socket (fds+nfds)->fd.
+                     */
+                   printf(" \t POLLIN on ls. Accepting connection\n");
+                   namelength = sizeof (s_name);
+                   fds = (struct pollfd *)realloc(fds,(nfds+1)*sizeof(struct pollfd));
+                   (fds+nfds)->fd  = accept (ls, (struct sockaddr *)&s_name, &namelength);
+                   if ((fds+nfds)->fd == -1)
+                   {
+                      perror ("accept");
+                      cleanup(0, (fds+nfds)->fd, 1);
+                      fds = (struct pollfd *)realloc(fds,nfds*sizeof(struct pollfd));
+                      continue;
+                   }
+                   (fds+nfds)->events = POLLIN | POLLRDNORM;
+                   nfds++;
+                   continue;
+               }
+               if ((fds+i)->revents & POLLNVAL)
+               {
+                   printf ("POLLNVAL on socket. Freeing resource\n");
+                   nfds--;
+                   memcpy(fds+i,fds+i+1,nfds-i);
+                   fds = (struct pollfd *)realloc(fds,nfds*sizeof(struct pollfd));
+                   continue;
+               }
+               if ((fds+i)->revents & POLLHUP)
+               {
+                   printf ("\t POLLHUP => peer reset connection ...\n");
+                   cleanup(0,(fds+i)->fd,2);
+                   nfds--;
+                   memcpy(fds+i,fds+i+1,nfds-i);
+                   fds = (struct pollfd *)realloc(fds,nfds*sizeof(struct pollfd));
+                   continue;
+               }
+              if ((fds+i)->revents & POLLERR){
+                  printf ("\t POLLERR => peer reset connection ...\n");
+                  cleanup(0,(fds+i)->fd,2);
+                  nfds--;
+                  memcpy(fds+i,fds+i+1,nfds-i);
+                  fds = (struct pollfd *)realloc(fds,nfds*sizeof(struct pollfd));
+                  continue;
+             }
+             if ((fds+i)->revents & POLLRDNORM)
+             { 
+                 retval = recv((fds+i)->fd, message, sizeof(message)-1, 0); // Don't forget the string terminator here!
+                 printf(" \t -> (recv) retval = %d.\n",retval);  /* ped */
+                 msgIdx = retval;
+                 if (retval <=0)
+                 {
+                    if (retval == 0)
+                    {
+                       printf ("\t recv()==0 => peer disconnected...\n");
+                       cleanup(1,(fds+i)->fd,2);
+                    }
+                    else 
+                    {
+                        perror ("\t receive");
+                        cleanup( 0, (fds+i)->fd,1);
+                    }
+                    nfds--;
+                    memcpy(fds+i,fds+i+1,nfds-i);
+                    fds = (struct pollfd *)realloc(fds,nfds*sizeof(struct pollfd));
+                    continue;
+                 }
+                 while((retval > 0) && (message[msgIdx-2] != '\r') && ((msgIdx+1) < sizeof(message)))
+                 {
+                     retval = recv((fds+i)->fd, &message[msgIdx-2], sizeof(message) - retval - 1, 0);
+                     printf(" \t -> (recv) retval = %d.\n", retval);                     
+                     if(retval > 0)
+                         msgIdx += retval - 2;
+                 }
+                 if(msgIdx > 1)
+                   if(message[msgIdx-1] == '\n')
+                     if(message[msgIdx-2] == '\r')
+                       message[msgIdx-2] = '\0';
+                     else
+                       message[msgIdx-1] = '\0';
+
+                 printf (" \t Normal message :  %.*s\n",retval,message);
+                 msgIdx = HandleCommand(message, msgIdx, response, sizeof(response));
+                 retval = send((fds+i)->fd, response, strlen(response), 0);
+                 if((retval < 0) || (msgIdx == 1))
+                 {
+                     printf("\t send()==0 => peer disconnected...\n");
+                     cleanup(1,(fds+1)->fd, 2);
+                 }
+                 continue;
+             }
+            }       
         }
-    
     }
     
     return 0;
