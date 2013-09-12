@@ -1,0 +1,10 @@
+[Unit]
+Description=DNS320L System Daemon
+After=syslog.target
+
+[Service]
+ExecStart=/usr/bin/dns320l-daemon
+Type=forking
+
+[Install]
+WantedBy=multi-user.target
