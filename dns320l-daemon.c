@@ -11,8 +11,6 @@
   The MCU protocol was reverse engineered by strace() calls to up_send_daemon and
   up_read_daemon of the original firmware.
 
-
-
   This program is free software: you can redistribute it and/or modify it under
   the terms of the GNU General Public License as published by the Free Software
   Foundation, either version 3 of the License, or (at your option) any later
@@ -49,10 +47,12 @@
 #include <iniparser.h>
 
 #include "dns320l.h"
-
+#include "dns320l-daemon.h"
 
 int ls;
 int fd;
+
+DaemonConfig stDaemonConfig;
 
 /** @file dns320l-daemon.c
     @brief Implementation of a free system daemon replacement for
@@ -68,13 +68,13 @@ int fd;
   @param gpioDir Pointer containing the sysfs path to the GPIO subdir
   @return The GPIO's value
   */
-int gpio_get_value(unsigned int gpio, unsigned int *value, char *gpioDir)
+int gpio_get_value(unsigned int gpio, unsigned int *value)
 {
   int fd, len;
   char buf[100];
   char ch;
 
-  len = snprintf(buf, sizeof(buf), "%s/gpio%d/value", gpioDir, gpio);
+  len = snprintf(buf, sizeof(buf), "%s/gpio%d/value", stDaemonConfig.gpioDir, gpio);
 
   fd = open(buf, O_RDONLY);
   if (fd < 0) {
@@ -132,6 +132,8 @@ static void sighandler(int sig)
     break;
   case SIGTERM:
     cleanup(0, ls, 1);
+    if(stDaemonConfig.syncOnShutdown)
+      HandleCommand("systohc", 7, NULL, 0);
     syslog(LOG_INFO, "Shutting down machine in 10s...\n");
     SendCommand(fd, DeviceShutdownCmd, 0);
     exit(EXIT_SUCCESS);
@@ -641,12 +643,6 @@ int HandleCommand(char *message, int messageLen, char *retMessage, int bufSize)
 */
 int main(int argc, char *argv[])
 {
-
-  char *portname;
-  char *gpioDir;
-  int serverPort;
-  int fanPollTime;
-  int gpioPollTime;
   char response[500];
   int i;
   pid_t pid;
@@ -656,8 +652,6 @@ int main(int argc, char *argv[])
   int opt;
   int sleepCount;
   int pollTimeMs;
-  int goDaemon = 1;
-  int debug = 0;
   int readRtcOnStartup = 0;
   char buf[100];
   char *configPath = "/etc/dns320l-daemon.ini";
@@ -670,9 +664,6 @@ int main(int argc, char *argv[])
   int retval;
   int ret;
   int msgIdx;
-  int tempLow;
-  int tempHigh;
-  int hysteresis;
   char message[500];
   dictionary *iniFile;
   socklen_t namelength;
@@ -682,6 +673,9 @@ int main(int argc, char *argv[])
   sleepCount = 0;
   pollTimeMs = 10; // Sleep 10ms for every loop
   fanSpeed = -1;
+  
+  stDaemonConfig.goDaemon = 1;
+  stDaemonConfig.debug = 0;
 
   // Parse command line arguments
   while((i = getopt(argc, argv, "fc:d")) != -1)
@@ -689,11 +683,11 @@ int main(int argc, char *argv[])
     switch(i)
     {
       case 'f':
-        goDaemon = 0;
+        stDaemonConfig.goDaemon = 0;
         break;
       case 'd':
-        debug = 1;
-        goDaemon = 0;
+        stDaemonConfig.debug = 1;
+        stDaemonConfig.goDaemon = 0;
         break;
       case 'c':
         configPath = optarg;
@@ -724,28 +718,30 @@ int main(int argc, char *argv[])
   // Load our configuration file or use default values 
   // if it doesn't exist!
   iniFile = iniparser_load(configPath);
-  portname = iniparser_getstring(iniFile, "Serial:Port", "/dev/ttyS1");
-  readRtcOnStartup = iniparser_getint(iniFile, "Daemon:SyncTimeOnStartup", 0);
-  fanPollTime = iniparser_getint(iniFile, "Fan:PollTime", 15);
-  tempLow = iniparser_getint(iniFile, "Fan:TempLow", 45);
-  tempHigh = iniparser_getint(iniFile, "Fan:TempHigh", 50);
-  hysteresis = iniparser_getint(iniFile, "Fan:Hysteresis", 2);
-  gpioPollTime = iniparser_getint(iniFile, "GPIO:PollTime", 1);
-  gpioDir = iniparser_getstring(iniFile, "GPIO:SysfsGpioDir", "/sys/class/gpio");
-  serverPort = iniparser_getint(iniFile, "Daemon:ServerPort", 57367);
+  stDaemonConfig.portName = iniparser_getstring(iniFile, "Serial:Port", "/dev/ttyS1");
+  stDaemonConfig.syncOnStartup = iniparser_getint(iniFile, "Daemon:SyncTimeOnStartup", 0);
+  stDaemonConfig.fanPollTime = iniparser_getint(iniFile, "Fan:PollTime", 15);
+  stDaemonConfig.tempLow = iniparser_getint(iniFile, "Fan:TempLow", 45);
+  stDaemonConfig.tempHigh = iniparser_getint(iniFile, "Fan:TempHigh", 50);
+  stDaemonConfig.hysteresis = iniparser_getint(iniFile, "Fan:Hysteresis", 2);
+  stDaemonConfig.gpioPollTime = iniparser_getint(iniFile, "GPIO:PollTime", 1);
+  stDaemonConfig.gpioDir = iniparser_getstring(iniFile, "GPIO:SysfsGpioDir", "/sys/class/gpio");
+  stDaemonConfig.serverPort = iniparser_getint(iniFile, "Daemon:ServerPort", 57367);
+  stDaemonConfig.pollGpio = iniparser_getint(iniFile, "Daemon:PollGPIO", 1);
+  stDaemonConfig.syncOnShutdown = iniparser_getint(iniFile, "Daemon:SyncTimeOnShutdown", 0);
 
   // Setup syslog
-  if(debug)
+  if(stDaemonConfig.debug)
     setlogmask(LOG_UPTO(LOG_DEBUG));
   else
     setlogmask(LOG_UPTO(LOG_INFO));
   
-  if(goDaemon)
+  if(stDaemonConfig.goDaemon)
     openlog("dns320l-daemon", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_LOCAL1);
   else
     openlog("dns320l-daemon", LOG_CONS | LOG_PID | LOG_NDELAY | LOG_PERROR, LOG_LOCAL1);
     
-  if(goDaemon)
+  if(stDaemonConfig.goDaemon)
   {
     pid = fork();
     if(pid < 0)
@@ -794,7 +790,7 @@ int main(int argc, char *argv[])
 
 
   s_name.sin_family = AF_INET;
-  s_name.sin_port = htons(serverPort);
+  s_name.sin_port = htons(stDaemonConfig.serverPort);
   s_name.sin_addr.s_addr = htonl(INADDR_ANY);
 
   syslog(LOG_DEBUG, "Bind name to ls. \n");
@@ -814,16 +810,16 @@ int main(int argc, char *argv[])
     cleanup(0, ls,1);
     exit(EXIT_FAILURE);
   }
-  syslog(LOG_INFO, "Server startup success on port %i\n", serverPort);
+  syslog(LOG_INFO, "Server startup success on port %i\n", stDaemonConfig.serverPort);
 
   fds = (struct pollfd *)calloc(1,nfds*sizeof(struct pollfd));
   fds->fd = ls;
   fds->events = POLLIN | POLLPRI;
 
-  fd = open (portname, O_RDWR | O_NOCTTY | O_SYNC);
+  fd = open (stDaemonConfig.portName, O_RDWR | O_NOCTTY | O_SYNC);
   if (fd < 0)
   {
-    syslog(LOG_ERR, "error %d opening %s: %s", errno, portname, strerror (errno));
+    syslog(LOG_ERR, "error %d opening %s: %s", errno, stDaemonConfig.portName, strerror (errno));
     return;
   }
 
@@ -843,7 +839,7 @@ int main(int argc, char *argv[])
     return EXIT_FAILURE;
   }
   
-  if(readRtcOnStartup)
+  if(stDaemonConfig.syncOnStartup)
   {
     syslog(LOG_INFO, "Setting system clock from RTC...\n");
     if(HandleCommand("hctosys", 7, NULL, 0) != 0)
@@ -868,7 +864,7 @@ int main(int argc, char *argv[])
     {
       temperature = ThermalTable[temperature];
       syslog(LOG_DEBUG, "Read Temperature: %i\n", temperature);
-      if(temperature < (tempLow - hysteresis))
+      if(temperature < (stDaemonConfig.tempLow - stDaemonConfig.hysteresis))
       {
         if(fanSpeed != 0)
         {
@@ -877,7 +873,7 @@ int main(int argc, char *argv[])
           fanSpeed = 0;
         }
       }
-      else if(temperature < tempLow)
+      else if(temperature < stDaemonConfig.tempLow)
       {
         if(fanSpeed > 1)
         {
@@ -886,7 +882,7 @@ int main(int argc, char *argv[])
           fanSpeed = 1;
         }
       }
-      else if(temperature < (tempHigh - hysteresis))
+      else if(temperature < (stDaemonConfig.tempHigh - stDaemonConfig.hysteresis))
       {
         if(fanSpeed != 1)
         {
@@ -895,7 +891,7 @@ int main(int argc, char *argv[])
           fanSpeed = 1;
         }
       }
-      else if(temperature < tempHigh)
+      else if(temperature < stDaemonConfig.tempHigh)
       {
         if(fanSpeed < 1)
         {
@@ -920,11 +916,11 @@ int main(int argc, char *argv[])
     }
 
 
-    while((sleepCount  * pollTimeMs) < (fanPollTime * 1000))
+    while((sleepCount  * pollTimeMs) < (stDaemonConfig.fanPollTime * 1000))
     {
-      if(((sleepCount * pollTimeMs) % (gpioPollTime* 1000)) == 0)
+      if(stDaemonConfig.pollGpio && (((sleepCount * pollTimeMs) % (stDaemonConfig.gpioPollTime* 1000)) == 0))
       {
-        if(gpio_get_value(GPIO_BUTTON_POWER, &powerBtn, gpioDir) == 0)
+        if(gpio_get_value(GPIO_BUTTON_POWER, &powerBtn) == 0)
         {
           if((powerBtn == 0) && !pressed)
           {
