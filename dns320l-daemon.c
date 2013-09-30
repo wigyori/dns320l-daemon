@@ -221,6 +221,7 @@ int CheckResponse(char *buf, char *cmd, int len)
 {
   int i;
   int tmp;
+  int failure = 0;
 
   // Attention, 5 is hardcoded here and never checked!
   for(i=0;i<5;i++)
@@ -228,8 +229,17 @@ int CheckResponse(char *buf, char *cmd, int len)
     if(buf[i] != cmd[i])
     {
       syslog(LOG_ERR, "Char %i is %i but should be %i\n", i, buf[i], cmd[i]);
-      return ERR_WRONG_ANSWER;
+      failure = 1;
+      break;
     }
+  }
+  if(failure)
+  {
+    for(i=0;i<len;i++)
+    {
+      syslog(LOG_DEBUG, "Buf/Cmd %i: %i %i\n", i, buf[i], cmd[i]);
+    }
+    return ERR_WRONG_ANSWER;
   }
   if(buf[len-1] != cmd[len-1])
     return ERR_WRONG_ANSWER;
@@ -248,6 +258,7 @@ int SendCommand(int fd, char *cmd, char *outArray)
   int n;
   int i;
   int j;
+  ssize_t count;
 
   char buf[15]; // We need to keep the DateAndTime values here
   // Yes, we're sending byte by byte here - b/c the lenght of
@@ -256,8 +267,13 @@ int SendCommand(int fd, char *cmd, char *outArray)
   i=0;
   do
   {
-    write(fd, &cmd[i], 1);
+    count = write(fd, &cmd[i], 1);
     i++;
+    usleep(50); // The MCU seems to need some time..
+    if(count != 1)
+    {
+      syslog(LOG_ERR, "Error writing byte %i: %i, count: %i\n", (i-1), cmd[i-1], count);
+    }
   } while(cmd[i-1] != CMD_STOP_MAGIC);
 
   i=0;
@@ -271,6 +287,10 @@ int SendCommand(int fd, char *cmd, char *outArray)
   if(buf[i-1] != CMD_STOP_MAGIC)
   {
     syslog(LOG_ERR, "Got no stop magic!\n");
+    for(j=0;j<i;j++)
+    {
+      syslog(LOG_DEBUG, "Buf %i: %i\n", j, buf[j]);
+    }
     return ERR_WRONG_ANSWER;
   }
   else
@@ -298,6 +318,11 @@ int SendCommand(int fd, char *cmd, char *outArray)
       if(buf[i-1] != CMD_STOP_MAGIC)
       {
         syslog(LOG_ERR, "Got no stop magic!\n");
+        for(j=0;j<i;j++)
+        {
+         syslog(LOG_DEBUG, "Buf %i: %i\n", j, buf[j]);
+        }
+
         return ERR_WRONG_ANSWER;
       }
 
