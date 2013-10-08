@@ -62,12 +62,7 @@ DaemonConfig stDaemonConfig;
     @date 2013/09/12
 */
 
-/** <i>Function</i> that reads a GPIO value from sysfs interface.
-  @param gpio The GPIO number to read
-  @param value Pointer where the value is to be put
-  @param gpioDir Pointer containing the sysfs path to the GPIO subdir
-  @return The GPIO's value
-  */
+
 int gpio_get_value(unsigned int gpio, unsigned int *value)
 {
   int fd, len;
@@ -94,11 +89,6 @@ int gpio_get_value(unsigned int gpio, unsigned int *value)
   return 0;
 }
 
-/** <i>Function</i> that cleans up a socket after shutdown
-  @param shut If 1, the socket is shutdown first
-  @param s The socket to work on
-  @param howmany Number of sockets to close?
-*/
 void cleanup(int shut,int s,int howmany)
 {
   int     retval;
@@ -117,10 +107,6 @@ void cleanup(int shut,int s,int howmany)
     syslog(LOG_ERR, "close");
 } 
 
-/** <i>Function</i> that is called by the OS upon sending a signal
-    to the application
- @param sig The signal number received
-*/
 static void sighandler(int sig)
 {
   syslog(LOG_DEBUG, "Signal Handler called\n");
@@ -141,13 +127,6 @@ static void sighandler(int sig)
   }
 }
 
-/** <i>Function</i> that sets interface attributes on a given
-  serial port.
- @param fd The file descriptor (serial port) to work with
- @param speed The speed the interface to configure
- @param parity Use parity or not
- @return 0 on success, otherwise 1
-*/
 int set_interface_attribs (int fd, int speed, int parity)
 {
   struct termios tty;
@@ -188,11 +167,6 @@ int set_interface_attribs (int fd, int speed, int parity)
   return 0;
 }
 
-/** <i>Function</i> that sets an interface to either blocking
-  or non-blocking mode
-  @param fd The file descriptor to work with
-  @param should_block Flag whether it should block or not
-*/
 void set_blocking (int fd, int should_block)
 {
   struct termios tty;
@@ -210,13 +184,6 @@ void set_blocking (int fd, int should_block)
     syslog(LOG_ERR, "error %d setting term attributes", errno);
 }
 
-/** <i>Function</i> that checks the first few bytes of the MCU's response
-  whether it corresponds to the sent command
-  @param buf The buffer to compare
-  @param cmd The command that was sent
-  @param len The lenght of the command
-  @return SUCCESS on success, otherwise ERR_WRONG_ANSWER
-*/
 int CheckResponse(char *buf, char *cmd, int len)
 {
   int i;
@@ -246,14 +213,42 @@ int CheckResponse(char *buf, char *cmd, int len)
   return SUCCESS;
 }
 
-/** <i>Function</i> that sends a command to the MCU and waits
-  for response and/or ACK.
-  @param fd The serial port to work on
-  @param cmd The command to send
-  @param outArray An array where the response shall be put, can be NULL for no response
-  @return SUCCESS, ERR_WRONG_ANSWER or the number of bytes received
-  */
+void ClearSerialPort(int fd)
+{
+  char buf[100];
+  struct pollfd fds[1];
+  fds[0].fd = fd;
+  fds[0].events = POLLIN;
+  int n = 0;
+  int pollrc;
+  pollrc = poll(fds, 1, 0);
+  if(pollrc > 0)
+  {
+    if(fds[0].revents & POLLIN)
+    {
+      syslog(LOG_DEBUG, "Clearing Serial Port...\n");
+      do
+      {
+        n = read(fd, buf, sizeof(buf));
+      } while(n == sizeof(buf));
+    }
+  }
+}
+
 int SendCommand(int fd, char *cmd, char *outArray)
+{
+  int nRetries = -1;
+  int ret;
+  do
+  {
+    ret = _SendCommand(fd, cmd, outArray);
+    nRetries++;
+  } while((ret != SUCCESS) && (nRetries < stDaemonConfig.nRetries));
+
+  return ret;
+}
+
+int _SendCommand(int fd, char *cmd, char *outArray)
 {
   int n;
   int i;
@@ -264,15 +259,19 @@ int SendCommand(int fd, char *cmd, char *outArray)
   // Yes, we're sending byte by byte here - b/c the lenght of
   // commands and responses can vary!
 
+  ClearSerialPort(fd); // We clear the serial port in case
+  // some old data from a previous request is still pending
+
   i=0;
   do
   {
     count = write(fd, &cmd[i], 1);
     i++;
-    usleep(50); // The MCU seems to need some time..
+    usleep(100); // The MCU seems to need some time..
     if(count != 1)
     {
       syslog(LOG_ERR, "Error writing byte %i: %i, count: %i\n", (i-1), cmd[i-1], count);
+      return ERR_WRITE_ERROR;
     }
   } while(cmd[i-1] != CMD_STOP_MAGIC);
 
@@ -298,7 +297,10 @@ int SendCommand(int fd, char *cmd, char *outArray)
     // If outArray is not NULL, an answer was requested
     if(outArray != NULL)
     {
-      CheckResponse(buf, cmd, i);
+      if(CheckResponse(buf, cmd, i) != SUCCESS)
+      {
+        return ERR_WRONG_ANSWER;
+      }
       // Copy the answer to the outArray
       for(j=0; j<i; j++)
       {
@@ -338,14 +340,6 @@ int SendCommand(int fd, char *cmd, char *outArray)
   }
 }
 
-/** <i>Function</i> that handles commands received by the socket
-  and puts the response back into the retMessage buffer
-  @param message The message that was received (the command)
-  @param messageLen The lenght of the received message
-  @param retMessage Pointer to an output array for the response message
-  @parma bufSize The size of the message buffer
-  @return 0 on success, 1 on failure, 2 for quit and 3 for daemon shutdown
-*/
 int HandleCommand(char *message, int messageLen, char *retMessage, int bufSize)
 {
   int tmp;
@@ -661,11 +655,6 @@ int HandleCommand(char *message, int messageLen, char *retMessage, int bufSize)
   return 0;
 }
 
-/** <i>Main Function</i>
-  @param argc The argument count
-  @param argv The argument vector
-  @return EXIT_SUCCESS on success, otherwise EXIT_ERROR
-*/
 int main(int argc, char *argv[])
 {
   char response[500];
@@ -754,6 +743,7 @@ int main(int argc, char *argv[])
   stDaemonConfig.serverPort = iniparser_getint(iniFile, "Daemon:ServerPort", 57367);
   stDaemonConfig.pollGpio = iniparser_getint(iniFile, "Daemon:PollGPIO", 1);
   stDaemonConfig.syncOnShutdown = iniparser_getint(iniFile, "Daemon:SyncTimeOnShutdown", 0);
+  stDaemonConfig.nRetries = iniparser_getint(iniFile, "Serial:NumberOfRetries", 5);
 
   // Setup syslog
   if(stDaemonConfig.debug)
@@ -851,9 +841,6 @@ int main(int argc, char *argv[])
   set_interface_attribs (fd, B115200, 0);  // set speed to 115,200 bps, 8n1 (no parity)
   set_blocking (fd, 0);                // set no blocking
 
-  // Flush the serial port first...
-
-  read(fd, buf, 100);
 
   // Send the DeviceReady command to the MCU
   if(SendCommand(fd, DeviceReadyCmd, NULL) == SUCCESS)

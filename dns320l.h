@@ -22,6 +22,7 @@ this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
 #define ERR_WRONG_ANSWER      -1
+#define ERR_WRITE_ERROR       -2
 #define SUCCESS                1
 
 #define CMD_START_MAGIC     0xfa
