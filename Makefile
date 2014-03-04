@@ -1,5 +1,5 @@
-CC=gcc
-CFLAGS=-I. -I/usr/include
+CC?=gcc
+CFLAGS?=-I. -I/usr/include
 LIBS=-liniparser
 DEPS = dns320l.h
 OBJ = dns320l-daemon.o
@@ -8,7 +8,7 @@ OBJ = dns320l-daemon.o
 	$(CC) -c -o $@ $< $(CFLAGS)
 
 dns320l-daemon: $(OBJ)
-	gcc -o $@ $^ $(CFLAGS) $(LIBS)
+	$(CC) -o $@ $^ $(CFLAGS) $(LIBS)
 
 clean:
 	rm -f *.o
