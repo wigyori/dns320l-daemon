@@ -208,8 +208,12 @@ int CheckResponse(char *buf, char *cmd, int len)
     }
     return ERR_WRONG_ANSWER;
   }
-  if(buf[len-1] != cmd[len-1])
+/*  if(buf[len-1] != cmd[len-1])
+  {
+    syslog(LOG_ERR, "Last character does not match! Char %i is %i but should be %i\n", len-1, buf[len-1], cmd[len-1]);
     return ERR_WRONG_ANSWER;
+  }
+*/
   return SUCCESS;
 }
 
@@ -243,6 +247,7 @@ int SendCommand(int fd, char *cmd, char *outArray)
   {
     ret = _SendCommand(fd, cmd, outArray);
     nRetries++;
+    syslog(LOG_DEBUG, "Try number: %i\n", nRetries+1);
   } while((ret != SUCCESS) && (nRetries < stDaemonConfig.nRetries));
 
   return ret;
@@ -256,7 +261,7 @@ int _SendCommand(int fd, char *cmd, char *outArray)
   ssize_t count;
 
   char buf[15]; // We need to keep the DateAndTime values here
-  // Yes, we're sending byte by byte here - b/c the lenght of
+  // Yes, we're sending byte by byte here - b/c the length of
   // commands and responses can vary!
 
   ClearSerialPort(fd); // We clear the serial port in case
@@ -285,7 +290,7 @@ int _SendCommand(int fd, char *cmd, char *outArray)
 
   if(buf[i-1] != CMD_STOP_MAGIC)
   {
-    syslog(LOG_ERR, "Got no stop magic!\n");
+    syslog(LOG_ERR, "Got no stop magic, but read %i bytes!\n", i);
     for(j=0;j<i;j++)
     {
       syslog(LOG_DEBUG, "Buf %i: %i\n", j, buf[j]);
@@ -330,7 +335,7 @@ int _SendCommand(int fd, char *cmd, char *outArray)
 
       CheckResponse(buf, AckFromSerial, i);
       syslog(LOG_DEBUG, "Returning %i read bytes\n", n);
-      return j;
+      return SUCCESS;
     }
     // Only wait for ACK if no response is expected
     else
@@ -740,6 +745,7 @@ int main(int argc, char *argv[])
   stDaemonConfig.hysteresis = iniparser_getint(iniFile, "Fan:Hysteresis", 2);
   stDaemonConfig.gpioPollTime = iniparser_getint(iniFile, "GPIO:PollTime", 1);
   stDaemonConfig.gpioDir = iniparser_getstring(iniFile, "GPIO:SysfsGpioDir", "/sys/class/gpio");
+  stDaemonConfig.serverAddr = iniparser_getstring(iniFile, "Daemon:ServerAddr", "0.0.0.0");
   stDaemonConfig.serverPort = iniparser_getint(iniFile, "Daemon:ServerPort", 57367);
   stDaemonConfig.pollGpio = iniparser_getint(iniFile, "Daemon:PollGPIO", 1);
   stDaemonConfig.syncOnShutdown = iniparser_getint(iniFile, "Daemon:SyncTimeOnShutdown", 0);
@@ -806,7 +812,7 @@ int main(int argc, char *argv[])
 
   s_name.sin_family = AF_INET;
   s_name.sin_port = htons(stDaemonConfig.serverPort);
-  s_name.sin_addr.s_addr = htonl(INADDR_ANY);
+  s_name.sin_addr.s_addr = inet_addr(stDaemonConfig.serverAddr);
 
   syslog(LOG_DEBUG, "Bind name to ls. \n");
   retval = bind (ls,(struct sockaddr *)&s_name, sizeof s_name);

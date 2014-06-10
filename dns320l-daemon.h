@@ -14,6 +14,7 @@ typedef struct
   int debug;
   char *gpioDir;
   char *portName;
+  char *serverAddr;
   int tempLow;
   int tempHigh;
   int hysteresis;
