@@ -19,6 +19,7 @@ typedef struct
   int tempHigh;
   int hysteresis;
   int nRetries;
+  int delayShutdown;
 
 } DaemonConfig;
 

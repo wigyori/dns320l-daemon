@@ -120,7 +120,8 @@ static void sighandler(int sig)
     cleanup(0, ls, 1);
     if(stDaemonConfig.syncOnShutdown)
       HandleCommand("systohc", 7, NULL, 0);
-    syslog(LOG_INFO, "Shutting down machine in 10s...\n");
+    syslog(LOG_INFO, "Shutting down machine in %d seconds...\n", stDaemonConfig.delayShutdown);
+    DeviceShutdownCmd[5] = (char)stDaemonConfig.delayShutdown;
     SendCommand(fd, DeviceShutdownCmd, 0);
     exit(EXIT_SUCCESS);
     break;
@@ -396,19 +397,26 @@ int HandleCommand(char *message, int messageLen, char *retMessage, int bufSize)
     }
   }
   
-/*  else if(strncmp(message, "DeviceShutdown", strlen("DeviceShutdown")) == 0)
+  else if(strncmp(message, "DeviceShutdown", strlen("DeviceShutdown")) == 0)
   {
     syslog(LOG_DEBUG, "DeviceShutdown");
     if(messageLen >= (strlen("DeviceShutdown") + 2))
     {
-      //tmp = atoi(&message[strlen("DeviceShutdown") + 1]); // FIXME: The parameter is never passed, we default to 10s here..
+      tmp = atoi(&message[strlen("DeviceShutdown") + 1]);
       //printf("%s\n", tmp);
+      DeviceShutdownCmd[5] = (char)tmp;
       if(SendCommand(fd, DeviceShutdownCmd, NULL) == SUCCESS)
+      {
         strncpy(retMessage, "OK\n", bufSize);
+        execl("/sbin/shutdown", "shutdown", "-h", "now", (char *)0);
+      }
       else
+      {
         strncpy(retMessage, "ERR\n", bufSize);
+        return 1;
+      }
     }
-  }*/
+  }
   
   else if(strncmp(message, "quit", messageLen) == 0)
   {
@@ -647,7 +655,7 @@ int HandleCommand(char *message, int messageLen, char *retMessage, int bufSize)
   else if(strncmp(message, "help", messageLen) == 0)
   {
     syslog(LOG_DEBUG, "help");
-    strncpy(retMessage, "Available Commands: DeviceReady, GetTemperature, "// DeviceShutdown, "
+    strncpy(retMessage, "Available Commands: DeviceReady, GetTemperature, DeviceShutdown, "
             "EnablePowerRecovery, DisablePowerRecovery, GetPowerRecoveryState, "
             "EnableWOL, DisableWOL, GetWOLState, PowerLedOn, "
             "PowerLedOff, PowerLedBlink, systohc, hctosys, ReadRtc, ShutdownDaemon, quit\n", bufSize);
@@ -750,6 +758,7 @@ int main(int argc, char *argv[])
   stDaemonConfig.pollGpio = iniparser_getint(iniFile, "Daemon:PollGPIO", 1);
   stDaemonConfig.syncOnShutdown = iniparser_getint(iniFile, "Daemon:SyncTimeOnShutdown", 0);
   stDaemonConfig.nRetries = iniparser_getint(iniFile, "Serial:NumberOfRetries", 5);
+  stDaemonConfig.delayShutdown = iniparser_getint(iniFile, "Daemon:DeviceShutdownDelay", 30);
 
   // Setup syslog
   if(stDaemonConfig.debug)
@@ -944,6 +953,7 @@ int main(int argc, char *argv[])
           {
             pressed = 1;
             syslog(LOG_INFO, "Power Button Pressed, shutting down system!\n");
+            DeviceShutdownCmd[5] = (char)stDaemonConfig.delayShutdown;
             SendCommand(fd, DeviceShutdownCmd, NULL);
             execl("/sbin/shutdown", "shutdown", "-h", "now", (char *)0);
           }
