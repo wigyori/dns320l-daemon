@@ -44,7 +44,6 @@
 #include <netinet/in.h>
 #include <sys/uio.h>
 #include <syslog.h>
-#include <iniparser.h>
 
 #include "dns320l.h"
 #include "dns320l-daemon.h"
@@ -681,7 +680,6 @@ int main(int argc, char *argv[])
   int pollTimeMs;
   int readRtcOnStartup = 0;
   char buf[100];
-  char *configPath = "/etc/dns320l-daemon.ini";
   char msgBuf[15];
   int temperature;
   int fanSpeed;
@@ -692,7 +690,6 @@ int main(int argc, char *argv[])
   int ret;
   int msgIdx;
   char message[500];
-  dictionary *iniFile;
   socklen_t namelength;
   pressed = 0;
   nfds = 1;
@@ -705,7 +702,7 @@ int main(int argc, char *argv[])
   stDaemonConfig.debug = 0;
 
   // Parse command line arguments
-  while((i = getopt(argc, argv, "fc:d")) != -1)
+  while((i = getopt(argc, argv, "fd")) != -1)
   {
     switch(i)
     {
@@ -716,9 +713,6 @@ int main(int argc, char *argv[])
         stDaemonConfig.debug = 1;
         stDaemonConfig.goDaemon = 0;
         break;
-      case 'c':
-        configPath = optarg;
-        break;
       case '?':
         if(optopt == 'c')
           fprintf(stderr, "Option -%c requires an argument.\n", optopt);
@@ -728,10 +722,9 @@ int main(int argc, char *argv[])
           fprintf (stderr,
                    "Unknown option character `\\x%x'.\n",
                    optopt);
-        fprintf(stderr, "Usage: %s [-f] [-c configPath] [-d]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [-f] [-d]\n", argv[0]);
         fprintf(stderr, "       where\n");
         fprintf(stderr, "         -f              don't detach\n");
-        fprintf(stderr, "         -c configPath   path to .ini\n");
         fprintf(stderr, "         -d              debug (implies -f)\n");
         return EXIT_FAILURE;
     }
@@ -742,23 +735,20 @@ int main(int argc, char *argv[])
   signal(SIGTERM, sighandler);
   signal(SIGINT, sighandler);
   
-  // Load our configuration file or use default values 
-  // if it doesn't exist!
-  iniFile = iniparser_load(configPath);
-  stDaemonConfig.portName = iniparser_getstring(iniFile, "Serial:Port", "/dev/ttyS1");
-  stDaemonConfig.syncOnStartup = iniparser_getint(iniFile, "Daemon:SyncTimeOnStartup", 0);
-  stDaemonConfig.fanPollTime = iniparser_getint(iniFile, "Fan:PollTime", 15);
-  stDaemonConfig.tempLow = iniparser_getint(iniFile, "Fan:TempLow", 45);
-  stDaemonConfig.tempHigh = iniparser_getint(iniFile, "Fan:TempHigh", 50);
-  stDaemonConfig.hysteresis = iniparser_getint(iniFile, "Fan:Hysteresis", 2);
-  stDaemonConfig.gpioPollTime = iniparser_getint(iniFile, "GPIO:PollTime", 1);
-  stDaemonConfig.gpioDir = iniparser_getstring(iniFile, "GPIO:SysfsGpioDir", "/sys/class/gpio");
-  stDaemonConfig.serverAddr = iniparser_getstring(iniFile, "Daemon:ServerAddr", "0.0.0.0");
-  stDaemonConfig.serverPort = iniparser_getint(iniFile, "Daemon:ServerPort", 57367);
-  stDaemonConfig.pollGpio = iniparser_getint(iniFile, "Daemon:PollGPIO", 1);
-  stDaemonConfig.syncOnShutdown = iniparser_getint(iniFile, "Daemon:SyncTimeOnShutdown", 0);
-  stDaemonConfig.nRetries = iniparser_getint(iniFile, "Serial:NumberOfRetries", 5);
-  stDaemonConfig.delayShutdown = iniparser_getint(iniFile, "Daemon:DeviceShutdownDelay", 30);
+  stDaemonConfig.portName = "/dev/ttyS1";
+  stDaemonConfig.syncOnStartup = 0;
+  stDaemonConfig.fanPollTime = 15;
+  stDaemonConfig.tempLow = 45;
+  stDaemonConfig.tempHigh = 50;
+  stDaemonConfig.hysteresis = 2;
+  stDaemonConfig.gpioPollTime = 1;
+  stDaemonConfig.gpioDir = "/sys/class/gpio";
+  stDaemonConfig.serverAddr = "0.0.0.0";
+  stDaemonConfig.serverPort = 57367;
+  stDaemonConfig.pollGpio = 1;
+  stDaemonConfig.syncOnShutdown = 0;
+  stDaemonConfig.nRetries = 5;
+  stDaemonConfig.delayShutdown = 30;
 
   // Setup syslog
   if(stDaemonConfig.debug)
@@ -1073,6 +1063,5 @@ int main(int argc, char *argv[])
     }
   }
   closelog();
-  iniparser_freedict(iniFile);
   return EXIT_SUCCESS;
 }

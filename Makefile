@@ -1,6 +1,5 @@
 CC?=gcc
 CFLAGS?=-I. -I/usr/include
-LIBS=-liniparser
 DEPS = dns320l.h
 OBJ = dns320l-daemon.o
 
