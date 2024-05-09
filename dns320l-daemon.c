@@ -119,9 +119,6 @@ static void sighandler(int sig)
     cleanup(0, ls, 1);
     if(stDaemonConfig.syncOnShutdown)
       HandleCommand("systohc", 7, NULL, 0);
-    syslog(LOG_INFO, "Shutting down machine in %d seconds...\n", stDaemonConfig.delayShutdown);
-    DeviceShutdownCmd[5] = (char)stDaemonConfig.delayShutdown;
-    SendCommand(fd, DeviceShutdownCmd, 0);
     exit(EXIT_SUCCESS);
     break;
   }
