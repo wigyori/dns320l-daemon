@@ -536,6 +536,30 @@ int HandleCommand(char *message, int messageLen, char *retMessage, int bufSize)
     }
   }
   
+  else if(strncmp(message, "FanHalf", messageLen) == 0)
+  {
+    syslog(LOG_DEBUG, "FanHalf");
+    if(SendCommand(fd, FanHalfCmd, NULL) == SUCCESS)
+      strncpy(retMessage, "OK\n", bufSize);
+    else
+    {
+      strncpy(retMessage, "ERR\n", bufSize);
+      return 1;
+    }
+  }
+  
+  else if(strncmp(message, "FanStop", messageLen) == 0)
+  {
+    syslog(LOG_DEBUG, "FanStop");
+    if(SendCommand(fd, FanStopCmd, NULL) == SUCCESS)
+      strncpy(retMessage, "OK\n", bufSize);
+    else
+    {
+      strncpy(retMessage, "ERR\n", bufSize);
+      return 1;
+    }
+  }
+  
   else if(strncmp(message, "PowerLedBlink", messageLen) == 0)
   {
     syslog(LOG_DEBUG, "PowerLedBlink");
@@ -656,7 +680,7 @@ int HandleCommand(char *message, int messageLen, char *retMessage, int bufSize)
     syslog(LOG_DEBUG, "help");
     strncpy(retMessage, "Available Commands: DeviceReady, GetTemperature, DeviceShutdown, "
             "EnablePowerRecovery, DisablePowerRecovery, GetPowerRecoveryState, "
-            "EnableWOL, DisableWOL, GetWOLState, PowerLedOn, "
+            "EnableWOL, DisableWOL, GetWOLState, PowerLedOn, FanHalfCmd, FanStopCmd, "
             "PowerLedOff, PowerLedBlink, systohc, hctosys, ReadRtc, ShutdownDaemon, quit\n", bufSize);
   }
   else
