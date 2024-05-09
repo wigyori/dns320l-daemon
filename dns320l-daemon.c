@@ -766,7 +766,7 @@ int main(int argc, char *argv[])
   stDaemonConfig.gpioDir = "/sys/class/gpio";
   stDaemonConfig.serverAddr = "0.0.0.0";
   stDaemonConfig.serverPort = 57367;
-  stDaemonConfig.pollGpio = 1;
+  stDaemonConfig.pollGpio = 29;
   stDaemonConfig.syncOnShutdown = 0;
   stDaemonConfig.nRetries = 5;
   stDaemonConfig.delayShutdown = 30;
