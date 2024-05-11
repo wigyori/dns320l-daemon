@@ -677,7 +677,7 @@ int HandleCommand(char *message, int messageLen, char *retMessage, int bufSize)
     syslog(LOG_DEBUG, "help");
     strncpy(retMessage, "Available Commands: DeviceReady, GetTemperature, DeviceShutdown, "
             "EnablePowerRecovery, DisablePowerRecovery, GetPowerRecoveryState, "
-            "EnableWOL, DisableWOL, GetWOLState, PowerLedOn, FanHalfCmd, FanStopCmd, "
+            "EnableWOL, DisableWOL, GetWOLState, PowerLedOn, FanHalf, FanStop, "
             "PowerLedOff, PowerLedBlink, systohc, hctosys, ReadRtc, ShutdownDaemon, quit\n", bufSize);
   }
   else
