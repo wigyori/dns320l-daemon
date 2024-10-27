@@ -966,7 +966,7 @@ int main(int argc, char *argv[])
             syslog(LOG_INFO, "Power Button Pressed, shutting down system!\n");
             DeviceShutdownCmd[5] = (char)stDaemonConfig.delayShutdown;
             SendCommand(fd, DeviceShutdownCmd, NULL);
-            execl("/sbin/shutdown", "shutdown", "-h", "now", (char *)0);
+            execl("/sbin/halt", "halt", (char *)0);
           }
         }
 
