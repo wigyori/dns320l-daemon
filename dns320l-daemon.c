@@ -68,7 +68,7 @@ int gpio_get_value(unsigned int gpio, unsigned int *value)
   char buf[100];
   char ch;
 
-  len = snprintf(buf, sizeof(buf), "%s/gpio%d/value", stDaemonConfig.gpioDir, gpio);
+  len = snprintf(buf, sizeof(buf), "%s/mcu_power/value", stDaemonConfig.gpioDir);
 
   fd = open(buf, O_RDONLY);
   if (fd < 0) {
