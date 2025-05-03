@@ -26,6 +26,7 @@
 
 */
 
+#include <ctype.h>
 #include <errno.h>
 #include <termios.h>
 #include <unistd.h>
@@ -39,6 +40,7 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/time.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -861,7 +863,7 @@ int main(int argc, char *argv[])
   if (fd < 0)
   {
     syslog(LOG_ERR, "error %d opening %s: %s", errno, stDaemonConfig.portName, strerror (errno));
-    return;
+    return EXIT_FAILURE;
   }
 
   set_interface_attribs (fd, B115200, 0);  // set speed to 115,200 bps, 8n1 (no parity)
